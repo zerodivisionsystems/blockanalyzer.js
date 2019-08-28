@@ -11,7 +11,9 @@ Its purpose is also to peck transactions involving addresses in the wallet.
 We are working on the documentation.
 
 ### License
+---
 GPL
 
 ### Supported and Developed by
+---
 [![N|Solid](https://www.zerodivision.it/wp-content/uploads/2015/10/zdlogo.png)](https://www.zerodivision.it)
