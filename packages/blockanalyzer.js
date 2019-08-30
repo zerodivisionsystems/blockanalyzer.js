@@ -14,7 +14,7 @@
 'use strict'
 
 
-const Web3 = require("Web3");
+const Web3 = require('Web3');
 const Web3PromiEvent = require('web3-core-promievent');
 
 
@@ -33,41 +33,115 @@ class BlockAnalyzer {
         // HttpProvider, WebsocketProvider, IpcProvider
         this.web3 = new Web3();
         this.web3.setProvider(constructorObj.web3.url);
+        this.generalEvent = Web3PromiEvent();
         this.promiEvent = Web3PromiEvent();
+        this.addresses = null;
 
     }
 
 
-    discoverDeposit() {
+    loadAccounts(){
 
-        this.web3.eth.getBlockNumber()
-            .then(blocknumber => {
+        return new Promise((resolve, reject) => {
 
-                this.promiEvent.eventEmitter.emit('blocknumber', blocknumber);
+            this.web3.eth.getAccounts().then((accounts) => {
 
-                // Now we'll get the block from the previous got blocknumber
-                this.web3.eth.getBlock(blocknumber)
-                    .then(blockobj => {
+                this.addresses = accounts;
+                resolve();
 
-                        this.promiEvent.eventEmitter.emit('blockobj', blockobj);
-
-                        blockobj['transactions'].forEach(transactionhash => {
-
-                            
-                            this.web3.eth.getTransaction(transactionhash).then( txobj => {
-                                this.promiEvent.eventEmitter.emit('transaction', txobj);
-                            }).catch(err => console.log(err));
-
-                        });
+            }).catch((error) => { reject(error) })
+        });
+        
+    }
 
 
+    newBlockEvent(timeout){
 
-                    }).catch(err => console.log(err));
+        let blocknumber = 0;
+        let interval = null;
 
+        interval = setInterval( () => {
+            this.web3.eth.getBlock("latest").then(blockobj => {
+                
 
-            }).catch(err => console.log(err));
+                if(blockobj.number == 0){
+                    console.log("Not sync");
+                    clearInterval(interval);
+                    this.promiEvent.eventEmitter.emit('error',
+                        'you provider is not synced (blocknumber is equal to 0), use instead lastNodeBlockEvent() method');
 
+                }
+
+                if(blockobj.number > blocknumber) {
+
+                    console.log(blockobj);
+
+                    blocknumber = blockobj.number;
+
+                    this.promiEvent.eventEmitter.emit('newblock', blockobj);
+                    this.promiEvent.resolve(blockobj);
+
+                }
+    
+            })
+        } , timeout);
+        
         return this.promiEvent.eventEmitter;
+
+    }
+
+
+    discoverDeposit(transactionslist) {
+
+        return new Promise((resolve, reject) => {
+
+            transactionslist.forEach(transactionhash => {
+
+                
+                this.web3.eth.getTransaction(transactionhash).then( txobj => {
+
+
+                    this.addresses.forEach(walletaddress => {
+                        console.log(walletaddress);
+                        if(walletaddress == txobj['to']){
+
+                            resolve(txobj);
+
+                        }
+                    });
+
+                }).catch(error => reject(error));
+
+            });
+    
+        });
+
+    }
+
+
+    listen(){
+        
+        this.newBlockEvent(2000)
+        .on('newblock', blockobj => {
+
+            console.log(blockobj);
+
+            this.loadAccounts( _ => {
+
+                this.discoverDeposit(blockobj.transactions)
+                .then( depositobj => {
+                    this.generalEvent.eventEmitter.emit('newdeposit', depositobj);
+                });
+
+            });
+
+        })
+        .on('error', error => {
+            // TODO: handle not sync error with the usage of a new function lastNodeBlockEvent()
+            this.generalEvent.eventEmitter.emit('error', error);
+        })
+
+        return this.generalEvent.eventEmitter;
 
     }
 
