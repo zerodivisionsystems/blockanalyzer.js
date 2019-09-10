@@ -51,11 +51,13 @@ class BlockAnalyzer {
         if (!this.web3.isConnected()) {
 
             // show some dialog to ask the user to start a node
+            console.error("Not connected!");
             return false
 
         } else {
 
             // start web3 filters, calls, etc
+            console.log("ok");
             return true
 
         }
@@ -76,11 +78,6 @@ class BlockAnalyzer {
             if (this.constructorObj.accounts.method == "file") {
                 //TODO: Check argument passed
                 this.addresses = this.loadAccountsFromFile();
-                resolve();
-            }
-            if (this.constructorObj.accounts.method == "keystore") {
-                //TODO: Check argument passed
-                this.addresses = this.loadAccountsFromKeystore(this.constructorObj.accounts.path);
                 resolve();
             }
             if (this.constructorObj.accounts.method == "list") {
@@ -108,16 +105,30 @@ class BlockAnalyzer {
     }
 
 
-    loadAccountsFromKeystore() {
-        return new Promise((resolve, reject) => {
-            //TODO: read all folder contents
-            let folder = fs.readdirSync();
-        });
+    loadAccountsFromFile() {
+        return fs.readFileSync(this.constructorObj.accounts.path);
     }
 
 
-    loadAccountsFromFile() {
-        return fs.readFileSync(this.constructorObj.accounts.path);
+    recoverBlocks(lastBlock) {
+        return new Promise((resolve, reject) => {
+
+            let difference = lastBlock - this.currentBlock;
+            console.log("This is the difference: " + difference);
+            let promises = [];
+
+            while (difference > 0) {
+                promises.push(this.web3.eth.getBlock(lastBlock - difference));
+
+                this.currentBlock = (lastBlock - difference);
+                difference = difference - 1;
+            }
+
+            Promise.all(promises).then((blockslist) => {
+                console.log("Now last block:  " + this.currentBlock);
+                resolve(blockslist);
+            });
+        });
     }
 
 
@@ -132,29 +143,30 @@ class BlockAnalyzer {
 
     newBlockScan() {
 
-        return new Promise((resolve, reject) => {
+        this.sleep(this.timeout);
+        this.web3.eth.getBlock(this.currentBlock).then(blockobj => {
 
-            this.sleep(this.timeout);
+            // Check if new block is generated and fully
+            if(blockobj == null){
+                this.newBlockScan();
+            }
 
-            this.web3.eth.getBlock(this.currentBlock).then(blockobj => {
+            // Checking sync status
+            if (blockobj.number == 0) {
+                console.log("Not sync");
+                this.promiEvent.eventEmitter.emit('error',
+                    'you provider is not synced (blocknumber is equal to 0), use instead lastNodeBlockEvent() method');
 
-                // Check if new block is generated and fully
-                if (blockobj == null) {
-                    this.newBlockScan();
-                }
+            }
 
-                // Checking sync status
-                if (blockobj.number == 0) {
-                    reject('not synced');
-                }
+            this.currentBlock = blockobj.number;
 
-                this.currentBlock = blockobj.number;
+            this.promiEvent.eventEmitter.emit('newblock', blockobj);
+            this.promiEvent.resolve(blockobj);
 
-
-                resolve(blockobj);
-
-            });
         });
+
+        return this.promiEvent.eventEmitter;
 
     }
 
@@ -177,26 +189,26 @@ class BlockAnalyzer {
 
                 let deposits = [];
 
-                for (let txobj in alltxobj) {
+                for(let txobj in alltxobj){
 
 
                     for (let address in this.addresses) {
 
                         let walletaddress = this.addresses[address];
-
+    
                         if (walletaddress == alltxobj[txobj]['to']) {
-
-                            deposits.push(alltxobj[txobj]);
-
+    
+                            console.log("Ok cool... new deposit");
+                            deposits.push(alltxobj.txobj);
+    
                         }
-
+    
                     }
 
                 }
 
-                this.currentBlock += 1;
                 resolve(deposits);
-
+        
             });
 
         });
@@ -205,25 +217,30 @@ class BlockAnalyzer {
 
     listen() {
 
-        this.newBlockScan().then((blockobj) => {
+        this.newBlockScan()
+            .on('newblock', blocksobj => {
 
-            this.accountLoader().then(() => {
+                this.accountLoader().then(_ => {
 
-                this.discoverDeposit(blockobj).then((depositsobj) => {
-                    this.generalEvent.eventEmitter.emit('newdeposit', depositsobj);
-                    this.listen();
-                });
+                    this.discoverDeposit(blocksobj)
+                        .then(depositsobj => {
+                            console.log("Block number: " + this.currentBlock + " scanned");
+                            this.currentBlock += 1;
+                            this.generalEvent.eventEmitter.emit('newdeposit', depositsobj);
+                            this.listen();
+                        });
 
-            });
+                }).catch((err) => { });
 
-        });
+            })
+            .on('error', error => {
+                // TODO: handle not sync error with the usage of a new function lastNodeBlockEvent()
+                this.generalEvent.eventEmitter.emit('error', error);
+            })
 
         return this.generalEvent.eventEmitter;
 
     }
-
-
-
 
 }
 
